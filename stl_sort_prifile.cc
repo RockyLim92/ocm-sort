@@ -24,6 +24,7 @@ using namespace std;
 #define NR_ENTRIES 1000
 #define NR_ENTRIES_MEM 10
 #define INPUT_PATH "./input.txt"
+#define RUNS_DIR_PATH "./runs/"
 
 struct Data{
 	uint32_t key;
@@ -62,45 +63,50 @@ void GenerateDataFile(){
 
 	int fd = open( INPUT_PATH, O_RDWR | O_CREAT | O_LARGEFILE, S_IRUSR);
 	if(fd == -1){
-		fprintf(stderr, "FAIL: open file - %s\n", strerror(errno));
+		fprintf(stderr, "FAIL: open file(%s) - %s\n", INPUT_PATH, strerror(errno));
 	}
 
 	write(fd, data, sizeof(data));
 	close(fd);
 }
 
-void LoadData(){
+void RunFormation(){
 	Data data[NR_ENTRIES_MEM];
 
-	int fd = open( INPUT_PATH, O_RDONLY);
-	if(fd == -1){
+	int fd_input = open( INPUT_PATH, O_RDONLY);
+	if(fd_input == -1){
 		fprintf(stderr, "FAIL: open file - %s\n", strerror(errno));
 	}
-
+	
 	size_t nr_remain = NR_ENTRIES;
-	size_t nr_entries_written = 0;
+	size_t run_idx=0;
 
-	while(nr_entries_written > 0){
-		size_t tmp_written = read(fd, data, sizeof(data));
+	while(nr_remain > 0){
+		size_t byte_written = read(fd_input, data, sizeof(data));
+		DBG_P("byte_written is: %zu\n", byte_written);
 		
-
-
-		for(int i=0; i<NR_ENTRIES_MEM; i++){
-			DBG_P("key is: %d\n", data[i].key);
-		}
+		nr_remain -= NR_ENTRIES_MEM;
 
 		/*q_sort*/
 		sort(&data[0], &data[0] + NR_ENTRIES_MEM, compare);
 		DBG_P("data sorted\n");
+		
+		string run_path = RUNS_DIR_PATH;
+		run_path += "run_" + to_string(run_idx++);
+		
+		int fd_run = open( run_path.c_str(), O_RDWR | O_CREAT | O_LARGEFILE, S_IRUSR);
+		if(fd_run == -1){
+			fprintf(stderr, "FAIL: open file(%s) - %s\n", run_path.c_str() , strerror(errno));
+		}
 
 		for(int i=0; i<NR_ENTRIES_MEM; i++){
 			DBG_P("key is: %d\n", data[i].key);
 		}
 
+		write(fd_run, data, sizeof(data));
+		close(fd_run);
 	}
-
-
-	close(fd);
+	close(fd_input);
 }
 
 int main(int argc, char* argv[]){
@@ -108,7 +114,8 @@ int main(int argc, char* argv[]){
 	DBG_P("size of Data: %zu\n", sizeof(struct Data));
 
 	GenerateDataFile();
-	LoadData();
+	
+	RunFormation();
 
 	return 0;
 }
