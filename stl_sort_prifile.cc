@@ -18,23 +18,30 @@
 
 using namespace std;
 
-string FILE_PATH = "sample_input.txt";
+// 교수님은 64bit로 하라고 하셨는데 그럼 string은 8글자고 너무 작은것같은데... ㅠ, 일단 512B로 해보자
+#define VALUE_SIZE 64
+//#define NR_ENTRIES 1000000
+#define NR_ENTRIES 1000
+#define NR_ENTRIES_MEM 10
+#define INPUT_PATH "./input.txt"
 
-
-class Data{
-public:
+struct Data{
 	uint32_t key;
-	char value[4096]; // 교수님은 64bit로 하라고 하셨는데 그럼 string은 8글자고 너무 작은것같은데... ㅠ, 일단 4KB로 해보자
+	char value[VALUE_SIZE];
 };
 
-void *randstring(size_t length, char *buf) { // length should be qualified as const if you follow a rigorous standard
-	static char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.-#'?!"; // could be const
+bool compare(struct Data a, struct Data b){
+	return  (a.key < b.key);
+}
+
+void *randstring(size_t length, char *buf) {
+	static char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.-#'?!";
 	if (length) {
 		if (buf) {
-			int l = (int) (sizeof(charset) -1); // (static/global, could be const or #define SZ, would be even better)
-			int key;  // one-time instantiation (static/global would be even better)
+			int l = (int) (sizeof(charset) -1);
+			int key;
 			for (int n = 0;n < length;n++) {        
-				key = rand() % l;   // no instantiation, just assignment, no overhead from sizeof
+				key = rand() % l;
 				buf[n] = charset[key];
 			}
 			buf[length] = '\0';
@@ -42,26 +49,66 @@ void *randstring(size_t length, char *buf) { // length should be qualified as co
 	}
 }
 
-void GenerateDataFile(string file_path){
-	Data data;
-	
-	randstring(sizeof(data.value), data.value);
-	data.key = rand() % UINT32_MAX;
+void GenerateDataFile(){
+	Data data[NR_ENTRIES];
 
-	int fd = open( file_path.c_str(), O_RDWR | O_CREAT | O_LARGEFILE, S_IRUSR);
+	srand((unsigned int)time(0));
+
+	for(int i=0; i<NR_ENTRIES; i++){
+		randstring(sizeof(data[i].value), data[i].value);
+		data[i].key = rand() % UINT32_MAX;
+		DBG_P("data[%d].key = %d\n", i,data[i].key);
+	}
+
+	int fd = open( INPUT_PATH, O_RDWR | O_CREAT | O_LARGEFILE, S_IRUSR);
 	if(fd == -1){
 		fprintf(stderr, "FAIL: open file - %s\n", strerror(errno));
 	}
 
-	
-
-	
-
-	
+	write(fd, data, sizeof(data));
+	close(fd);
 }
-	
-int main(void){
-	
-	GenerateDataFile(FILE_PATH);
 
+void LoadData(){
+	Data data[NR_ENTRIES_MEM];
+
+	int fd = open( INPUT_PATH, O_RDONLY);
+	if(fd == -1){
+		fprintf(stderr, "FAIL: open file - %s\n", strerror(errno));
+	}
+
+	size_t nr_remain = NR_ENTRIES;
+	size_t nr_entries_written = 0;
+
+	while(nr_entries_written > 0){
+		size_t tmp_written = read(fd, data, sizeof(data));
+		
+
+
+		for(int i=0; i<NR_ENTRIES_MEM; i++){
+			DBG_P("key is: %d\n", data[i].key);
+		}
+
+		/*q_sort*/
+		sort(&data[0], &data[0] + NR_ENTRIES_MEM, compare);
+		DBG_P("data sorted\n");
+
+		for(int i=0; i<NR_ENTRIES_MEM; i++){
+			DBG_P("key is: %d\n", data[i].key);
+		}
+
+	}
+
+
+	close(fd);
+}
+
+int main(int argc, char* argv[]){
+
+	DBG_P("size of Data: %zu\n", sizeof(struct Data));
+
+	GenerateDataFile();
+	LoadData();
+
+	return 0;
 }
