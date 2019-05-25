@@ -19,16 +19,16 @@
 using namespace std;
 
 // 교수님은 8byte로 하라고 하셨지만, 일단 64Byte로 해보자
-#define DATA_SIZE 64
-#define MEM_SIZE ((uint64_t)4*1024*1024*1024) // 4GB
+#define DATA_SIZE 128
+#define MEM_SIZE ((int64_t)2*1024*1024*1024) // 2GB
 #define NR_RUNS 10
 #define INPUT_PATH "./input.txt"
 #define RUNS_DIR_PATH "./runs/"
+#define USE_EXISTING_DATA true
 
-#define NR_ENTRIES_MEM ((uint64_t)MEM_SIZE/DATA_SIZE)
-#define NR_ENTRIES ((uint64_t)NR_ENTRIES_MEM*NR_RUNS)
-#define TOTAL_DATA_SIZE 64*NR_ENTRIES
-#define BUFFER_SIZE NR_ENTRIES_MEM*DATA_SIZE
+#define NR_ENTRIES_MEM (MEM_SIZE/DATA_SIZE)
+#define NR_ENTRIES (NR_ENTRIES_MEM*NR_RUNS)
+#define TOTAL_DATA_SIZE	DATA_SIZE*NR_ENTRIES
 
 
 struct Data{
@@ -57,59 +57,57 @@ void *randstring(size_t length, char *buf) {
 	}
 }
 
-
-size_t WriteData(int fd, Data *buf, size_t buf_size){
-	size_t size = 0;
-	size_t len = 0;
+int64_t WriteData(int fd, char *buf, int64_t buf_size){
+	int64_t size = 0;
+	int len = 0;
 
 	while(1){
-		DBG_P("len = %zu\n", len);
-		DBG_P("size = %zu\n", size);
-		DBG_P("buf_size = %zu\n", buf_size);
 		
-		if((len = write(fd, &buf[size], buf_size - size)) > 0){
+		if((len = write(fd, &buf[0] + size , buf_size - size)) > 0){
+			DBG_P("len: %d\n", len);
+			
 			size += len;
 			if(size == buf_size){
-				DBG_P("return size = %zu\n", size);
 				return size;
 			}
 		}
 		else if(len == 0){
-			DBG_P("return size = %zu\n", size);
 			return size;
 		}
 		else{
-			if(errno == EINTR)
-				continue;
-			else
+			if(errno == EINTR){
+				DBG_P("got EINTR\n");
+				continue;	
+			}
+			else{
 				return -1;
+			}
 		}
 	}
 }
 
-size_t ReadData(int fd, Data *buf, size_t buf_size){
-	size_t size = 0;
-	size_t len = 0;
+int64_t ReadData(int fd, char *buf, int64_t buf_size){
+	int64_t size = 0;
+	int len = 0;
 
 	while(1){
-		DBG_P("len = %zu\n", len);
-		DBG_P("size = %zu\n", size);
-		DBG_P("buf_size = %zu\n", buf_size);
 		
-		if((len = read(fd, &buf[size], buf_size - size)) > 0){
+		if((len = read(fd, &buf[0] + size, buf_size - size)) > 0){
+			DBG_P("len: %d\n", len);
+			
 			size += len;
 			if(size == buf_size){
-				DBG_P("return size = %zu\n", size);
 				return size;
 			}
 		}
 		else if(len == 0){
-			DBG_P("return size = %zu\n", size);
 			return size;
 		}
 		else{
-			if(errno == EINTR)
+			if(errno == EINTR){
+				DBG_P("got EINTR\n");
 				continue;
+			}
 			else
 				return -1;
 		}
@@ -127,11 +125,11 @@ int GenerateDataFile(){
 		fprintf(stderr, "FAIL: open file(%s) - %s\n", INPUT_PATH, strerror(errno));
 	}
 
-	//const size_t alignment_limit = (BUFFER_SIZE / 4096) * 4096;
-	size_t nbyte_buffer = 0;
-	size_t nbyte_written = 0;
-	size_t nbyte_remain = MEM_SIZE;
-	size_t offset = 0;
+	DBG_P("file opend\n");
+	
+	int64_t nbyte_buffer = 0;
+	int64_t nbyte_written = 0;
+	int64_t offset = 0;
 
 	for(size_t i=0; i<NR_ENTRIES; i++){
 
@@ -142,27 +140,30 @@ int GenerateDataFile(){
 		nbyte_buffer += DATA_SIZE;
 
 		if(nbyte_buffer == MEM_SIZE){
-			DBG_P("nbyte_buffer: %zu\n", nbyte_buffer);
+			DBG_P("nbyte_buffer: %ld\n", nbyte_buffer);
 
-			size_t tmp_nbyte_written = WriteData(fd, g_buffer, nbyte_buffer);
+			//char *buffer__ = (char *)g_buffer;
+
+			int64_t tmp_nbyte_written = WriteData(fd, (char *)g_buffer, nbyte_buffer);
 			if(tmp_nbyte_written == -1){
 				fprintf(stderr, "FAIL: write - %s\n", strerror(errno));
 				return -1;
 			}
-			DBG_P("tmp_nbyte_written: %zu\n", tmp_nbyte_written);
+			DBG_P("tmp_nbyte_written: %ld\n", tmp_nbyte_written);
 			
 			nbyte_written += tmp_nbyte_written;
 			nbyte_buffer = 0;
-			offset = 0;
+			offset = 1;
 
-			DBG_P("g_buffer flushed, nr_entries: %zu\n", i);
+			DBG_P("g_buffer flushed, nr_entries: %zu\n", i+1);
 		}
 	}
 
 	if(nbyte_written != TOTAL_DATA_SIZE){
-		fprintf(stderr, "FAIL: nbyte_written != TOTAO_DATA_SIZE\n");
+		fprintf(stderr, "FAIL: nbyte_written != TOTAL_DATA_SIZE\n");
 		return -1;
 	}
+
 	close(fd);
 }
 
@@ -173,18 +174,18 @@ void RunFormation(){
 		fprintf(stderr, "FAIL: open file - %s\n", strerror(errno));
 	}
 
-	size_t nr_remain = NR_ENTRIES;
-	size_t run_idx=0;
+	int64_t nbyte_read = 0;
+	int run_idx=0;
 
-	while(nr_remain > 0){
-		size_t tmp_byte_read = read(fd_input, g_buffer, MEM_SIZE);
+	while(nbyte_read < TOTAL_DATA_SIZE){
+		int64_t tmp_byte_read = ReadData(fd_input, (char *)g_buffer, MEM_SIZE);
 		if(tmp_byte_read == -1){
 			fprintf(stderr, "FAIL: read - %s\n", strerror(errno));
 		}
 		DBG_P("tmp_byte_read is: %zu\n", tmp_byte_read);
 
-		nr_remain -= NR_ENTRIES_MEM;
-		DBG_P("remain: %zu\n", nr_remain);
+		nbyte_read += tmp_byte_read;
+		DBG_P("nbyte_read: %ld\n", nbyte_read);
 
 		/*q_sort*/
 		sort(&g_buffer[0], &g_buffer[0] + NR_ENTRIES_MEM, compare);
@@ -198,7 +199,9 @@ void RunFormation(){
 			fprintf(stderr, "FAIL: open file(%s) - %s\n", run_path.c_str() , strerror(errno));
 		}
 
-		write(fd_run, g_buffer, sizeof(g_buffer));
+		WriteData(fd_run, (char *)g_buffer, MEM_SIZE);
+		DBG_P("run %d is flushed\n", run_idx-1);
+		
 		close(fd_run);
 	}
 	close(fd_input);
@@ -212,24 +215,27 @@ int main(int argc, char* argv[]){
 	printf("NR_ENTRIES_MEM: %zu\n", NR_ENTRIES_MEM);
 	printf("NR_ENTRIES: %zu\n", NR_ENTRIES);
 	printf("TOTAL_DATA_SIZE %zu\n", TOTAL_DATA_SIZE);
-	printf("BUFFER_SIZE %zu\n", BUFFER_SIZE);
 	printf("sizeof Data: %zu\n", sizeof(Data));
 
-	//Data *tmp = new Data[NR_ENTRIES_MEM];
+	// unaligned memory allocation
+	// Data *tmp = new Data[NR_ENTRIES_MEM];
 	
 	// alignment 맞게 동적할당 하는 방법
 	void *mem;
-	posix_memalign(&mem, 4096, BUFFER_SIZE);
+	posix_memalign(&mem, 4096, MEM_SIZE);
 	Data *tmp = new (mem) Data;
 	g_buffer = tmp;
-
+	
+#if !USE_EXISTING_DATA
 	if(GenerateDataFile() != -1){
 		DBG_P("Data file generated\n");
 	}
+#endif
 
 	RunFormation();
+	
+	free(tmp);
+	DBG_P("free tmp\n");
 
-	delete[] g_buffer;
-
-	return 0;
+	return 0; 
 }
