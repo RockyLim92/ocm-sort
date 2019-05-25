@@ -16,19 +16,24 @@
 #include "profile.h"
 #include "debug.h"
 
+
 using namespace std;
 
-// 교수님은 8byte로 하라고 하셨지만, 일단 64Byte로 해보자
 #define DATA_SIZE 128
 #define MEM_SIZE ((int64_t)2*1024*1024*1024) // 2GB
 #define NR_RUNS 10
 #define INPUT_PATH "./input.txt"
 #define RUNS_DIR_PATH "./runs/"
-#define USE_EXISTING_DATA true
+#define USE_EXISTING_DATA false
 
 #define NR_ENTRIES_MEM (MEM_SIZE/DATA_SIZE)
 #define NR_ENTRIES (NR_ENTRIES_MEM*NR_RUNS)
 #define TOTAL_DATA_SIZE	DATA_SIZE*NR_ENTRIES
+
+unsigned long long total_run_formation_time, total_run_formation_count;
+unsigned long long total_run_formation_load_time, total_run_formation_load_count;
+unsigned long long total_run_formation_sort_time, total_run_formation_sort_count;
+unsigned long long total_run_formation_store_time, total_run_formation_store_count;
 
 
 struct Data{
@@ -178,8 +183,17 @@ void RunFormation(){
 	int run_idx=0;
 
 	while(nbyte_read < TOTAL_DATA_SIZE){
-		int64_t tmp_byte_read = ReadData(fd_input, (char *)g_buffer, MEM_SIZE);
-		if(tmp_byte_read == -1){
+		
+
+        struct timespec local_time_load[2];
+        clock_gettime(CLOCK_MONOTONIC, &local_time_load[0]);
+        // load
+        int64_t tmp_byte_read = ReadData(fd_input, (char *)g_buffer, MEM_SIZE);
+        clock_gettime(CLOCK_MONOTONIC, &local_time_load[1]);
+        calclock(local_time_load, &total_run_formation_load_time, &total_run_formation_load_count);
+        
+        
+        if(tmp_byte_read == -1){
 			fprintf(stderr, "FAIL: read - %s\n", strerror(errno));
 		}
 		DBG_P("tmp_byte_read is: %zu\n", tmp_byte_read);
@@ -187,9 +201,16 @@ void RunFormation(){
 		nbyte_read += tmp_byte_read;
 		DBG_P("nbyte_read: %ld\n", nbyte_read);
 
-		/*q_sort*/
+		
+        struct timespec local_time_sort[2];
+        clock_gettime(CLOCK_MONOTONIC, &local_time_sort[0]);
+        /*q_sort*/
 		sort(&g_buffer[0], &g_buffer[0] + NR_ENTRIES_MEM, compare);
-		DBG_P("data sorted\n");
+        clock_gettime(CLOCK_MONOTONIC, &local_time_sort[1]);
+        calclock(local_time_sort, &total_run_formation_sort_time, &total_run_formation_sort_count);
+		
+        
+        DBG_P("data sorted\n");
 
 		string run_path = RUNS_DIR_PATH;
 		run_path += "run_" + to_string(run_idx++);
@@ -199,7 +220,14 @@ void RunFormation(){
 			fprintf(stderr, "FAIL: open file(%s) - %s\n", run_path.c_str() , strerror(errno));
 		}
 
-		WriteData(fd_run, (char *)g_buffer, MEM_SIZE);
+        struct timespec local_time_store[2];
+        clock_gettime(CLOCK_MONOTONIC, &local_time_store[0]);
+		// store
+        WriteData(fd_run, (char *)g_buffer, MEM_SIZE);
+        clock_gettime(CLOCK_MONOTONIC, &local_time_store[1]);
+        calclock(local_time_store, &total_run_formation_store_time, &total_run_formation_store_count);
+
+
 		DBG_P("run %d is flushed\n", run_idx-1);
 		
 		close(fd_run);
@@ -232,10 +260,20 @@ int main(int argc, char* argv[]){
 	}
 #endif
 
+	struct timespec local_time1[2];
+	clock_gettime(CLOCK_MONOTONIC, &local_time1[0]);
 	RunFormation();
+	clock_gettime(CLOCK_MONOTONIC, &local_time1[1]);
+	calclock(local_time1, &total_run_formation_time, &total_run_formation_count);
 	
 	free(tmp);
 	DBG_P("free tmp\n");
+
+
+    printf("runformation - total time: %llu, total_cout: %llu\n", total_run_formation_time, total_run_formation_count);
+    printf("runformation - load time: %llu, load_cout: %llu\n", total_run_formation_load_time, total_run_formation_load_count);
+    printf("runformation - sort time: %llu, sort_cout: %llu\n", total_run_formation_sort_time, total_run_formation_sort_count);
+    printf("runformation - store time: %llu, load_cout: %llu\n", total_run_formation_store_time, total_run_formation_store_count);
 
 	return 0; 
 }
