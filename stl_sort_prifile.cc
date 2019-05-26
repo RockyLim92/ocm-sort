@@ -12,24 +12,25 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
-
 #include "profile.h"
 #include "debug.h"
 
 using namespace std;
 
-// 교수님은 8byte로 하라고 하셨지만, 일단 64Byte로 해보자
 #define DATA_SIZE 128
 #define MEM_SIZE ((int64_t)2*1024*1024*1024) // 2GB
 #define NR_RUNS 10
 #define INPUT_PATH "./input.txt"
 #define RUNS_DIR_PATH "./runs/"
-#define USE_EXISTING_DATA true
+#define USE_EXISTING_DATA false
 
 #define NR_ENTRIES_MEM (MEM_SIZE/DATA_SIZE)
 #define NR_ENTRIES (NR_ENTRIES_MEM*NR_RUNS)
 #define TOTAL_DATA_SIZE	DATA_SIZE*NR_ENTRIES
 
+
+int64_t WriteData(int fd, char *buf, int64_t buf_size);
+int64_t ReadData(int fd, char *buf, int64_t buf_size);
 
 struct Data{
 	uint32_t key;
@@ -57,63 +58,6 @@ void *randstring(size_t length, char *buf) {
 	}
 }
 
-int64_t WriteData(int fd, char *buf, int64_t buf_size){
-	int64_t size = 0;
-	int len = 0;
-
-	while(1){
-		
-		if((len = write(fd, &buf[0] + size , buf_size - size)) > 0){
-			DBG_P("len: %d\n", len);
-			
-			size += len;
-			if(size == buf_size){
-				return size;
-			}
-		}
-		else if(len == 0){
-			return size;
-		}
-		else{
-			if(errno == EINTR){
-				DBG_P("got EINTR\n");
-				continue;	
-			}
-			else{
-				return -1;
-			}
-		}
-	}
-}
-
-int64_t ReadData(int fd, char *buf, int64_t buf_size){
-	int64_t size = 0;
-	int len = 0;
-
-	while(1){
-		
-		if((len = read(fd, &buf[0] + size, buf_size - size)) > 0){
-			DBG_P("len: %d\n", len);
-			
-			size += len;
-			if(size == buf_size){
-				return size;
-			}
-		}
-		else if(len == 0){
-			return size;
-		}
-		else{
-			if(errno == EINTR){
-				DBG_P("got EINTR\n");
-				continue;
-			}
-			else
-				return -1;
-		}
-	}
-	
-}
 
 int GenerateDataFile(){
 
@@ -178,8 +122,17 @@ void RunFormation(){
 	int run_idx=0;
 
 	while(nbyte_read < TOTAL_DATA_SIZE){
-		int64_t tmp_byte_read = ReadData(fd_input, (char *)g_buffer, MEM_SIZE);
-		if(tmp_byte_read == -1){
+		
+
+        struct timespec local_time_load[2];
+        clock_gettime(CLOCK_MONOTONIC, &local_time_load[0]);
+        // load
+        int64_t tmp_byte_read = ReadData(fd_input, (char *)g_buffer, MEM_SIZE);
+        clock_gettime(CLOCK_MONOTONIC, &local_time_load[1]);
+        calclock(local_time_load, &total_run_formation_load_time, &total_run_formation_load_count);
+        
+        
+        if(tmp_byte_read == -1){
 			fprintf(stderr, "FAIL: read - %s\n", strerror(errno));
 		}
 		DBG_P("tmp_byte_read is: %zu\n", tmp_byte_read);
@@ -187,9 +140,16 @@ void RunFormation(){
 		nbyte_read += tmp_byte_read;
 		DBG_P("nbyte_read: %ld\n", nbyte_read);
 
-		/*q_sort*/
+		
+        struct timespec local_time_sort[2];
+        clock_gettime(CLOCK_MONOTONIC, &local_time_sort[0]);
+        /*q_sort*/
 		sort(&g_buffer[0], &g_buffer[0] + NR_ENTRIES_MEM, compare);
-		DBG_P("data sorted\n");
+        clock_gettime(CLOCK_MONOTONIC, &local_time_sort[1]);
+        calclock(local_time_sort, &total_run_formation_sort_time, &total_run_formation_sort_count);
+		
+        
+        DBG_P("data sorted\n");
 
 		string run_path = RUNS_DIR_PATH;
 		run_path += "run_" + to_string(run_idx++);
@@ -199,7 +159,14 @@ void RunFormation(){
 			fprintf(stderr, "FAIL: open file(%s) - %s\n", run_path.c_str() , strerror(errno));
 		}
 
-		WriteData(fd_run, (char *)g_buffer, MEM_SIZE);
+        struct timespec local_time_store[2];
+        clock_gettime(CLOCK_MONOTONIC, &local_time_store[0]);
+		// store
+        WriteData(fd_run, (char *)g_buffer, MEM_SIZE);
+        clock_gettime(CLOCK_MONOTONIC, &local_time_store[1]);
+        calclock(local_time_store, &total_run_formation_store_time, &total_run_formation_store_count);
+
+
 		DBG_P("run %d is flushed\n", run_idx-1);
 		
 		close(fd_run);
@@ -207,8 +174,14 @@ void RunFormation(){
 	close(fd_input);
 }
 
-int main(int argc, char* argv[]){
+void PrintStat(){
+    printf("runformation - total time: %llu, total_cout: %llu\n", total_run_formation_time, total_run_formation_count);
+    printf("runformation - load time: %llu, load_cout: %llu\n", total_run_formation_load_time, total_run_formation_load_count);
+    printf("runformation - sort time: %llu, sort_cout: %llu\n", total_run_formation_sort_time, total_run_formation_sort_count);
+    printf("runformation - store time: %llu, load_cout: %llu\n", total_run_formation_store_time, total_run_formation_store_count);
+}
 
+void PrintConfig(){
 	printf("VALUESIZE: %d\n", DATA_SIZE);
 	printf("MEM_SIZE: %zu\n", MEM_SIZE);
 	printf("NR_RUNS: %d\n", NR_RUNS);
@@ -216,11 +189,16 @@ int main(int argc, char* argv[]){
 	printf("NR_ENTRIES: %zu\n", NR_ENTRIES);
 	printf("TOTAL_DATA_SIZE %zu\n", TOTAL_DATA_SIZE);
 	printf("sizeof Data: %zu\n", sizeof(Data));
+}
 
+int main(int argc, char* argv[]){
+
+	PrintConfig();
+	
 	// unaligned memory allocation
 	// Data *tmp = new Data[NR_ENTRIES_MEM];
 	
-	// alignment 맞게 동적할당 하는 방법
+	// aligned memory allocation
 	void *mem;
 	posix_memalign(&mem, 4096, MEM_SIZE);
 	Data *tmp = new (mem) Data;
@@ -232,10 +210,15 @@ int main(int argc, char* argv[]){
 	}
 #endif
 
+	struct timespec local_time1[2];
+	clock_gettime(CLOCK_MONOTONIC, &local_time1[0]);
+	/* run formation */
 	RunFormation();
+	clock_gettime(CLOCK_MONOTONIC, &local_time1[1]);
+	calclock(local_time1, &total_run_formation_time, &total_run_formation_count);
 	
-	free(tmp);
-	DBG_P("free tmp\n");
+	PrintStat();
 
+	free(tmp);
 	return 0; 
 }
