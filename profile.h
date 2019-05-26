@@ -23,4 +23,10 @@
 //Global function time/count variables
 unsigned long long total_time, total_count;
 
+unsigned long long total_run_formation_time, total_run_formation_count;
+unsigned long long total_run_formation_load_time, total_run_formation_load_count;
+unsigned long long total_run_formation_sort_time, total_run_formation_sort_count;
+unsigned long long total_run_formation_store_time, total_run_formation_store_count;
+
+
 #endif
