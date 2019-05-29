@@ -23,20 +23,20 @@
 
 using namespace std;
 
-#define NR_THREAD 4
-#define DATA_SIZE (128)
-#define MEM_SIZE ((int64_t)2*1024*1024*1024)
-#define BUFFER_SIZE (MEM_SIZE/NR_THREAD) // each mem buffer
-#define DATASET_MULTIPLIER 10
 #define INPUT_PATH "/mnt/test/rocky/input.txt"
 #define RUNS_DIR_PATH "/mnt/test/rocky/runs/"
+
+#define TOTAL_DATA_SIZE ((int64_t)2*10*1024*1024*1024)
+#define MEM_SIZE ((int64_t)2*1024*1024*1024)
+#define DATA_SIZE (128)
+#define NR_THREAD 4 // same as the number of buffer
+#define NR_THREAD_SORT 4
+#define BUFFER_SIZE (MEM_SIZE/NR_THREAD) // each mem buffer
 #define USE_EXISTING_DATA true
 #define IS_PARALLEL_SORT false
-#define NR_THREAD_SORT 4
 
 #define NR_ENTRIES_BUFFER (BUFFER_SIZE / DATA_SIZE)
-#define NR_ENTRIES (NR_ENTRIES_BUFFER * NR_THREAD * DATASET_MULTIPLIER)
-#define TOTAL_DATA_SIZE (BUFFER_SIZE * NR_THREAD * DATASET_MULTIPLIER)
+#define NR_ENTRIES (TOTAL_DATA_SIZE / DATA_SIZE)
 
 
 int64_t WriteData(int fd, char *buf, int64_t buf_size);
@@ -247,21 +247,20 @@ void* t_RunFormation(void *data){
 }
 
 void PrintStat(){
-    printf("runformation - total time: %llu, total_cout: %llu\n", total_run_formation_time, total_run_formation_count);
-    printf("runformation - load time: %llu, load_cout: %llu\n", total_run_formation_load_time, total_run_formation_load_count);
-    printf("runformation - sort time: %llu, sort_cout: %llu\n", total_run_formation_sort_time, total_run_formation_sort_count);
-    printf("runformation - store time: %llu, load_cout: %llu\n", total_run_formation_store_time, total_run_formation_store_count);
+	printf("run_formation;load;sort;store\n");
+	printf("%.2f;%.2f;%.2f;%.2f\n",(double)total_run_formation_time/1000000000,
+							  (double)total_run_formation_load_time/1000000000,
+							  (double)total_run_formation_sort_time/1000000000,
+							  (double)total_run_formation_store_time/1000000000);
 }
 
 void PrintConfig(){
 	printf("TOTAL_DATA_SIZE %zu\n", TOTAL_DATA_SIZE);
 	printf("DATA_SIZE: %d\n", DATA_SIZE);
 	printf("MEM_SIZE: %zu\n", MEM_SIZE);
-	printf("BUFFER_SIZE: %zu\n", BUFFER_SIZE);
-	
-	printf("NR_BUFFER: %d\n", NR_THREAD);
 	printf("NR_THREAD: %d\n", NR_THREAD);
-	printf("DATASET_MULTIPLIER: %d\n", DATASET_MULTIPLIER);
+	printf("NR_BUFFER: %d\n", NR_THREAD);
+	printf("BUFFER_SIZE: %zu\n", BUFFER_SIZE);
 	printf("NR_ENTRIES_BUFFER: %zu\n", NR_ENTRIES_BUFFER);
 	printf("NR_ENTRIES: %zu\n", NR_ENTRIES);
 }
