@@ -29,15 +29,14 @@ using namespace std;
 #define TOTAL_DATA_SIZE ((int64_t)2*10*1024*1024*1024)
 #define MEM_SIZE ((int64_t)2*1024*1024*1024)
 #define DATA_SIZE (128)
-#define NR_THREAD 4 // same as the number of buffer
-#define NR_THREAD_SORT 4
+#define NR_THREAD 16 // same as the number of buffer
+#define NR_THREAD_SORT 8
 #define BUFFER_SIZE (MEM_SIZE/NR_THREAD) // each mem buffer
 #define USE_EXISTING_DATA true
-#define IS_PARALLEL_SORT false
+#define IS_PARALLEL_SORT true
 
 #define NR_ENTRIES_BUFFER (BUFFER_SIZE / DATA_SIZE)
 #define NR_ENTRIES (TOTAL_DATA_SIZE / DATA_SIZE)
-
 
 int64_t WriteData(int fd, char *buf, int64_t buf_size);
 int64_t ReadData(int fd, char *buf, int64_t buf_size);
@@ -57,7 +56,6 @@ struct RunformationArgs{
 	char * r_buffer;
 	int64_t nbyte_load;
 };
-
 
 bool compare(struct Data a, struct Data b){
 	return  (a.key < b.key);
@@ -166,6 +164,7 @@ int RunFormation(){
 		}
 	}
 
+	close(fd_input);
 	return res;
 }
 
@@ -203,7 +202,7 @@ void* t_RunFormation(void *data){
         struct timespec local_time_sort[2];
         clock_gettime(CLOCK_MONOTONIC, &local_time_sort[0]);
 #if IS_PARALLEL_SORT
-		tbb::parallel_sort(g_buffer, g_buffer + NR_ENTRIES_BUFFER, compare);
+		tbb::parallel_sort(&g_buffer__[0], &g_buffer__[0] + NR_ENTRIES_BUFFER, compare);
 #else
 		sort(&g_buffer__[0], &g_buffer__[0] + NR_ENTRIES_BUFFER, compare);
 #endif
@@ -240,7 +239,6 @@ void* t_RunFormation(void *data){
 		DBG_P("run %d is done\n", run_idx-1);
 		close(fd_run);
 	}
-	close(fd_input);
 
 	DBG_P("thread is done\n");
 	return ((void *)1);
@@ -269,14 +267,17 @@ int main(int argc, char* argv[]){
 
 	int res = 0;
 	
-	PrintConfig();
+	// init parallel sort nr_threads
 	tbb::task_scheduler_init init(NR_THREAD_SORT);
-
+	
 	// aligned memory allocation
 	void *mem;
 	posix_memalign(&mem, 4096, MEM_SIZE);
 	Data *tmp = new (mem) Data;
 	g_buffer = tmp;
+	
+
+	PrintConfig();
 	
 #if !USE_EXISTING_DATA
 	if(GenerateDataFile() != -1){
