@@ -25,7 +25,7 @@ using namespace std;
 
 #define DATA_SIZE (128)
 #define MEM_SIZE ((int64_t)2*1024*1024*1024) // 2GB
-#define NR_RUNS 10
+#define NR_RUNS 8
 #define INPUT_PATH "./input.txt"
 #define OUTPUT_PATH "./output.txt"	// kh
 #define RUNS_DIR_PATH "./runs/"
@@ -56,7 +56,7 @@ struct idx_Data{
 		return data.key < cmp.data.key;
 	}
 	bool operator>(const idx_Data &cmp) const {
-		return data.key > cmp.data.key;
+		return data.key >= cmp.data.key;
 	}
 };
 
@@ -94,7 +94,6 @@ int GenerateDataFile(){
 
 	srand((unsigned int)time(0));
 	int fd = open( INPUT_PATH, O_DIRECT | O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0644);
-//	int fd = open( INPUT_PATH, O_DIRECT | O_RDWR | O_CREAT | 0644);
 	if(fd == -1){
 		fprintf(stderr, "FAIL: open file(%s) - %s\n", INPUT_PATH, strerror(errno));
 	}
@@ -207,9 +206,8 @@ void RunFormation(){
 void Merge(){
 	int run_count = NR_RUNS;
 	int fd_run[run_count];
-	int ptr_blk[run_count] = { 0, };
-	int ptr_run[run_count] = { 0, };
-	idx_Data tmp_buffer;
+	int64_t ptr_blk[run_count] = { 0, };
+	int64_t ptr_run[run_count] = { 0, };
 	blk_buffer = g_buffer;
 	priority_queue<idx_Data, vector<idx_Data>, greater<idx_Data>> pq;
 
@@ -217,65 +215,55 @@ void Merge(){
 		string run_path = RUNS_DIR_PATH;
 		run_path += "run_" + to_string(i);
 
-		// open run files
-		fd_run[i] = open( run_path.c_str(), O_DIRECT | O_RDWR | O_CREAT | O_LARGEFILE, "r");
+		fd_run[i] = open( run_path.c_str(), O_RDONLY);
 		if(fd_run[i] == -1){
 			fprintf(stderr, "FAIL: open file(%s) - %s\n", run_path.c_str() , strerror(errno));
 		}
-		// read the first blocks from run files
-		ReadData(fd_run[i], (char*)blk_buffer + (i * BLK_SIZE), BLK_SIZE);
+		ReadData(fd_run[i], (char*)(blk_buffer + i * NR_ENTRIES_BLK), BLK_SIZE);
 		ptr_run[i]++;
 		
-		// fill priority queue initially
-        	DBG_P("%d initializing\n", i);
-		
+		idx_Data tmp_buffer;
 		tmp_buffer.data = blk_buffer[i * NR_ENTRIES_BLK];
 		tmp_buffer.idx = i;
-		DBG_P("pushing key: %lu\n", tmp_buffer.data.key); 
 		pq.push(tmp_buffer);
+		
 		ptr_blk[i]++;
 	}
 
-	// open output file
-	int fd_output = open( OUTPUT_PATH, O_DIRECT | O_RDWR | O_CREAT | O_LARGEFILE, "w");
-
+	int fd_output = open( OUTPUT_PATH, O_DIRECT | O_RDWR | O_CREAT | O_LARGEFILE, 0644);
+	if(fd_output == -1){
+		fprintf(stderr, "FAIL: open file - %s\n", strerror(errno));
+	}
+	
 	int64_t nbyte_merged = 0;
-	int ptr_mrg = 0;
-
+	int64_t ptr_mrg = 0;
 	while (nbyte_merged < TOTAL_DATA_SIZE){
-		// remember index of pop 
 		int pop_idx = pq.top().idx;
-		// evict minimum
-		merge_buffer[ptr_mrg++] = pq.top().data;
+		merge_buffer[ptr_mrg] = pq.top().data;
 		pq.pop();
-		
-        	DBG_P("merging\n");
-		// check whether merge buffer is full, if so, flush it.
-		if (ptr_mrg == NR_ENTRIES_BLK){	// in this case 1.6m
-			WriteData(fd_output, (char*)merge_buffer, BLK_SIZE);
-			nbyte_merged += BLK_SIZE;
+
+		if (ptr_mrg == NR_ENTRIES_BLK){		// full merge buffer
+			DBG_P("merged key: %u\n", merge_buffer[0].key);	
+			int64_t tmp_nbyte_merged = WriteData(fd_output, (char *)merge_buffer, BLK_SIZE);
+			if(tmp_nbyte_merged == -1){
+				fprintf(stderr, "FAIL: write - %s\n", strerror(errno));
+			} else nbyte_merged += tmp_nbyte_merged;
 			ptr_mrg = 0;
-			DBG_P("nbyte_merged: %ld\n", nbyte_merged);
+//			DBG_P("nbyte_merged: %ld\n", nbyte_merged);
+		} else ptr_mrg++;
+
+		if ((ptr_blk[pop_idx] == NR_ENTRIES_BLK) && (ptr_run[pop_idx] < BLK_PER_RUN)){	// run, block empty
+			ReadData(fd_run[pop_idx], (char*)(blk_buffer + pop_idx*NR_ENTRIES_BLK), BLK_SIZE);
+//			DBG_P("blk_%lu/%lu of run_%d loaded\n", ptr_run[pop_idx], BLK_PER_RUN - 1, pop_idx);
+			ptr_blk[pop_idx] = 0;
+			ptr_run[pop_idx]++;
 		}
 
-		// labeling
+		idx_Data tmp_buffer;
 		tmp_buffer.data = blk_buffer[(pop_idx * NR_ENTRIES_BLK) + ptr_blk[pop_idx]];
 		tmp_buffer.idx = pop_idx;
-		// push new one
+		ptr_blk[pop_idx]++;
 		pq.push(tmp_buffer);
-		
-		// check whether pop block is exhausted, if so, load next.
-		if (ptr_blk[pop_idx] == NR_ENTRIES_BLK){	// in this case 1.6m
-			DBG_P("merging blk_%d/%d of run_%d completed\n", ptr_run[pop_idx], BLK_PER_RUN, pop_idx);
-			if(ptr_run[pop_idx] == BLK_PER_RUN){	// if run is exhausted,
-				DBG_P("merging run_%d completed\n", pop_idx);
-			}
-			else {
-				// load next block
-				ReadData(fd_run[pop_idx], (char*)blk_buffer + (pop_idx * BLK_SIZE) + (ptr_run[pop_idx] * DATA_SIZE), BLK_SIZE);
-				ptr_run[pop_idx]++;
-			}
-		}
 	}
 	
 	for (int i = 0; i < run_count; i++)
@@ -314,9 +302,13 @@ int main(int argc, char* argv[]){
 	
 	// aligned memory allocation
 	void *mem;
+	void *mem2;
 	posix_memalign(&mem, 4096, MEM_SIZE);
+	posix_memalign(&mem2, 4096, MEM_SIZE);	//	kh
 	Data *tmp = new (mem) Data;
+	Data *tmp2 = new (mem2) Data;	//	kh
 	g_buffer = tmp;
+	merge_buffer = tmp2;	//	kh
 	
 #if !USE_EXISTING_DATA
 	if(GenerateDataFile() != -1){
@@ -327,11 +319,12 @@ int main(int argc, char* argv[]){
 	struct timespec local_time1[2];
 	clock_gettime(CLOCK_MONOTONIC, &local_time1[0]);
 	/* run formation */
-	//RunFormation();
+//	RunFormation();
 	clock_gettime(CLOCK_MONOTONIC, &local_time1[1]);
 	calclock(local_time1, &total_run_formation_time, &total_run_formation_count);
-	
-	Merge();
+
+	/* merge */	
+	Merge();	//	kh
 
 	PrintStat();
 
