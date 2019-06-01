@@ -14,7 +14,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <queue>	// kh
-#include <vector>	// kh
 #include "tbb/parallel_sort.h"	// kh
 #include "tbb/task_scheduler_init.h"	// kh
 #include "profile.h"
@@ -25,7 +24,7 @@ using namespace std;
 
 #define DATA_SIZE (128)
 #define MEM_SIZE ((int64_t)2*1024*1024*1024) // 2GB
-#define NR_RUNS 8
+#define NR_RUNS 32
 #define INPUT_PATH "./input.txt"
 #define OUTPUT_PATH "./output.txt"	// kh
 #define RUNS_DIR_PATH "./runs/"
@@ -319,7 +318,7 @@ int main(int argc, char* argv[]){
 	struct timespec local_time1[2];
 	clock_gettime(CLOCK_MONOTONIC, &local_time1[0]);
 	/* run formation */
-//	RunFormation();
+	//RunFormation();
 	clock_gettime(CLOCK_MONOTONIC, &local_time1[1]);
 	calclock(local_time1, &total_run_formation_time, &total_run_formation_count);
 
