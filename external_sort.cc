@@ -24,26 +24,29 @@
 
 using namespace std;
 
-#define INPUT_PATH "/mnt/input/input.txt"
-#define OUTPUT_PATH "/mnt/output/output.txt"
-#define RUNS_DIR_PATH "/mnt/output/runs/"
+#define INPUT_PATH "/mnt/test/input.txt"
+#define OUTPUT_PATH "/mnt/test/output.txt"
+#define RUNS_DIR_PATH "/mnt/test/runs/"
 
 #define TOTAL_DATA_SIZE ((int64_t)8*1024*1024*1024) // (8GB)
 #define MEM_SIZE ((int64_t)1*1024*1024*1024)	// (1GB)
 #define DATA_SIZE (128)
 #define NR_THREAD 4 // same as the number of buffer
-#define NR_THREAD_SORT 1
-#define BUFFER_SIZE (MEM_SIZE/NR_THREAD) // each mem buffer // (256MB)
+#define BUFFER_SIZE (MEM_SIZE / NR_THREAD) // (run formation) mem buffer = run size // 256MB
 #define USE_EXISTING_DATA false
 #define USE_EXISTING_RUNS false	// kh
-#define IS_PARALLEL_SORT false
+#define IS_PARALLEL_SORT false	// tbb
+#define NR_THREAD_SORT 1	// tbb
 
-#define NR_RUNS ((TOTAL_DATA_SIZE/MEM_SIZE)*NR_THREAD)	// kh	// (32-runs)
-#define BLK_SIZE (MEM_SIZE/NR_RUNS)	// kh	// (32MB)
-#define BLK_PER_RUN (BUFFER_SIZE/BLK_SIZE)	// kh	// (8-blks)
-#define NR_ENTRIES_BLK (BLK_SIZE/DATA_SIZE)	// kh	// (256-entries)
+#define NR_RUNS ((TOTAL_DATA_SIZE / MEM_SIZE) * NR_THREAD)	// kh // 32
+#define BLK_SIZE ((MEM_SIZE / NR_RUNS) / 2)	// (merge) blk buffer // 32mb/2 // 16mb
+#define BLK_PER_RUN (BUFFER_SIZE / BLK_SIZE)	// kh	// 16
+#define NR_ENTRIES_BLK (BLK_SIZE / DATA_SIZE)	// kh // 131072(128k)
 #define NR_ENTRIES_BUFFER (BUFFER_SIZE / DATA_SIZE)
 #define NR_ENTRIES (TOTAL_DATA_SIZE / DATA_SIZE)
+
+#define BLK 0
+#define MERGE 1
 
 int64_t WriteData(int fd, char *buf, int64_t buf_size);
 int64_t ReadData(int fd, char *buf, int64_t buf_size);
@@ -77,6 +80,10 @@ struct RunformationArgs{
 	off_t st_offset;
 	char * r_buffer;
 	int64_t nbyte_load;
+};
+
+struct MergeArgs{
+	
 };
 
 bool compare(struct Data a, struct Data b){
@@ -274,6 +281,7 @@ void* t_RunFormation(void *data){
 void Merge(){
 	int run_count = NR_RUNS;
 	int fd_run[run_count];
+	bool idx_run[2] = { 0, };	// buffer index for sort, merge operations
 	int64_t ptr_blk[run_count] = { 0, };
 	int64_t ptr_run[run_count] = { 0, };
 	blk_buffer = g_buffer;
@@ -284,7 +292,7 @@ void Merge(){
 		fprintf(stderr, "FAIL: open file - %s\n", strerror(errno));
 	}
 
-	for (int i = 0; i < run_count; i++){
+	for (int i = 0; i < run_count; i++){	// initialize blk buffer
 		string run_path = RUNS_DIR_PATH;
 		run_path += "run_" + to_string(i);
 
@@ -292,11 +300,11 @@ void Merge(){
 		if(fd_run[i] == -1){
 			fprintf(stderr, "FAIL: open file(%s) - %s\n", run_path.c_str() , strerror(errno));
 		}
-		ReadData(fd_run[i], (char*)(blk_buffer + i * NR_ENTRIES_BLK), BLK_SIZE);
+		ReadData(fd_run[i], (char*)(blk_buffer + (i * NR_ENTRIES_BLK * 2)), (BLK_SIZE * 2));
 		ptr_run[i]++;
 
 		idx_Data tmp_buffer;
-		tmp_buffer.data = blk_buffer[i * NR_ENTRIES_BLK];
+		tmp_buffer.data = blk_buffer[i * NR_ENTRIES_BLK * 2];
 		tmp_buffer.idx = i;
 		pq.push(tmp_buffer);
 
@@ -307,26 +315,28 @@ void Merge(){
 	int64_t ptr_mrg = 0;
 	while (nbyte_merged < TOTAL_DATA_SIZE){
 		int pop_idx = pq.top().idx;
-		merge_buffer[ptr_mrg] = pq.top().data;
+		merge_buffer[(NR_ENTRIES_BLK * idx_run[MERGE]) + ptr_mrg] = pq.top().data;
 		pq.pop();
 
 		if (ptr_mrg == NR_ENTRIES_BLK){         // merge buffer is full
-			DBG_P("merged key: %u\n", merge_buffer[0].key); // check key sorting
-			int64_t tmp_nbyte_merged = WriteData(fd_output, (char *)merge_buffer, BLK_SIZE);
+			DBG_P("merged key: %u\n", merge_buffer[NR_ENTRIES_BLK*idx_run[MERGE]].key); // check key sorting
+			int64_t tmp_nbyte_merged = WriteData(fd_output, (char *)(merge_buffer + NR_ENTRIES_BLK*idx_run[MERGE]), BLK_SIZE);		// backstage
 			if(tmp_nbyte_merged == -1){
 				fprintf(stderr, "FAIL: write - %s\n", strerror(errno));
 			} else nbyte_merged += tmp_nbyte_merged;
 			ptr_mrg = 0;
+			idx_run[MERGE] = !idx_run[MERGE];	// toggle buffer index
 			DBG_P("nbyte_merged: %ld\n", nbyte_merged);
 		} else ptr_mrg++;
 
 		if ((ptr_blk[pop_idx] == NR_ENTRIES_BLK) && (ptr_run[pop_idx] < BLK_PER_RUN)){  // run and block is empty
-			ReadData(fd_run[pop_idx], (char*)(blk_buffer + pop_idx*NR_ENTRIES_BLK), BLK_SIZE);
+			ReadData(fd_run[pop_idx], (char*)(blk_buffer + (pop_idx * NR_ENTRIES_BLK * 2) + (NR_ENTRIES_BLK * !idx_run[BLK])), BLK_SIZE);	// backstage
+			idx_run[BLK] = !idx_run[BLK];
 			ptr_blk[pop_idx] = 0;
 			ptr_run[pop_idx]++;
 		}
 		idx_Data tmp_buffer;
-		tmp_buffer.data = blk_buffer[(pop_idx * NR_ENTRIES_BLK) + ptr_blk[pop_idx]];
+		tmp_buffer.data = blk_buffer[(pop_idx * NR_ENTRIES_BLK * 2) + (NR_ENTRIES_BLK * idx_run[BLK]) + ptr_blk[pop_idx]];
 		tmp_buffer.idx = pop_idx;
 		ptr_blk[pop_idx]++;
 		pq.push(tmp_buffer);
