@@ -24,25 +24,23 @@
 #include "debug.h"
 #include "threadpool.h"
 
-using namespace std;
-
-
 #define BLK 0		// hardcoding / fixed
 #define MERGE 1		// hardcoding / fixed
 
-#define INPUT_PATH "/mnt/test/input.txt"
-#define OUTPUT_PATH "/mnt/test/output.txt"
-#define RUNS_DIR_PATH "/mnt/test/runs/"
+#define INPUT_PATH "/mnt/test2/input.txt"
+#define OUTPUT_PATH "/mnt/test2/output.txt"
+#define RUNS_DIR_PATH "/mnt/test2/runs/"
 
 #define TOTAL_DATA_SIZE ((int64_t)32*1024*1024*1024) // (32GB)
 #define MEM_SIZE ((int64_t)2*1024*1024*1024)	// (2GB)
 #define DATA_SIZE (128)
-#define NR_THREAD 4 // same as the number of buffer
+#define NR_THREAD 8 // same as the number of buffer
 #define BUFFER_SIZE (MEM_SIZE / NR_THREAD) // (run formation) mem buffer = run size
 #define USE_EXISTING_DATA true
 #define USE_EXISTING_RUNS false
 #define IS_PRL_MERGE true
-#define IS_TBB false
+#define IS_CONCUR_PQ true
+#define IS_TBB true
 #define NR_THREAD_TBB 4
 
 #define NR_RUNS ((TOTAL_DATA_SIZE / MEM_SIZE) * NR_THREAD)
@@ -64,12 +62,15 @@ struct Data{
 struct idx_Data{
 	uint32_t idx;
 	struct Data data;
+/*
 	bool operator<(const idx_Data &cmp) const {
 		return data.key < cmp.data.key;
 	}
+*/
 	bool operator>(const idx_Data &cmp) const {
-		return data.key >= cmp.data.key;
+		return data.key > cmp.data.key;
 	}
+	
 };
 
 
@@ -77,7 +78,13 @@ Data *g_buffer;
 Data *blk_buffer;
 Data *merge_buffer; 
 
-atomic_int run_idx;
+std::atomic_int run_idx;
+
+#if IS_CONCUR_PQ
+tbb::concurrent_priority_queue<idx_Data, std::greater<idx_Data>> pq;
+#else
+std::priority_queue<idx_Data, std::vector<idx_Data>, std::greater<idx_Data>> pq;
+#endif
 
 struct RunformationArgs{
 	int fd_input;
@@ -91,9 +98,14 @@ bool compare(struct Data a, struct Data b){
 	return  (a.key < b.key);
 }
 
-bool idx_compare(struct idx_Data a, struct idx_Data b){
-	return  (a.data.key < b.data.key);
+void LocalPush(idx_Data buf){
+	pq.push(buf);
 }
+
+int local_pop(){
+
+}
+
 
 void *randstring(size_t length, char *buf) {
 	static char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.-#'?!";
@@ -112,7 +124,6 @@ void *randstring(size_t length, char *buf) {
 
 
 int GenerateDataFile(){
-
 	srand((unsigned int)time(0));
 
 	int fd = open( INPUT_PATH, O_DIRECT | O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0644);
@@ -238,7 +249,7 @@ void* t_RunFormation(void *data){
 #if IS_TBB
 		tbb::parallel_sort(&g_buffer__[0], &g_buffer__[0] + NR_ENTRIES_BUFFER, compare);
 #else
-		sort(&g_buffer__[0], &g_buffer__[0] + NR_ENTRIES_BUFFER, compare);
+		std::sort(&g_buffer__[0], &g_buffer__[0] + NR_ENTRIES_BUFFER, compare);
 #endif
 		clock_gettime(CLOCK_MONOTONIC, &local_time_sort[1]);
         calclock(local_time_sort, &total_run_formation_sort_time, &total_run_formation_sort_count);
@@ -246,8 +257,8 @@ void* t_RunFormation(void *data){
         
 		DBG_P("data sorted\n");
 
-		string run_path = RUNS_DIR_PATH;
-		run_path += "run_" + to_string(run_idx++);
+		std::string run_path = RUNS_DIR_PATH;
+		run_path += "run_" + std::to_string(run_idx++);
 
 		int fd_run = open( run_path.c_str(), O_DIRECT | O_RDWR | O_CREAT | O_LARGEFILE, 0644);
 		if(fd_run == -1){
@@ -285,8 +296,6 @@ void Merge(){
 	int64_t ptr_blk[run_count] = { 0, };
 	int64_t ptr_run[run_count] = { 0, };
 	blk_buffer = g_buffer;
-
-	priority_queue<idx_Data, vector<idx_Data>, greater<idx_Data>> pq;
 	ThreadPool::ThreadPool pool(NR_THREAD);
 
 	int fd_output = open( OUTPUT_PATH, O_DIRECT | O_RDWR | O_CREAT | O_LARGEFILE, 0644);
@@ -295,8 +304,8 @@ void Merge(){
 	}
 
 	for (int i = 0; i < run_count; i++){	// initialize blk buffer
-		string run_path = RUNS_DIR_PATH;
-		run_path += "run_" + to_string(i);
+		std::string run_path = RUNS_DIR_PATH;
+		run_path += "run_" + std::to_string(i);
 
 		fd_run[i] = open( run_path.c_str(), O_RDONLY);
 		if(fd_run[i] == -1){
@@ -308,17 +317,43 @@ void Merge(){
 		idx_Data tmp_buffer;
 		tmp_buffer.data = blk_buffer[i * NR_ENTRIES_BLK * 2];
 		tmp_buffer.idx = i;
+	/* === PROFILE START (push)=== */
+        struct timespec local_time_push[2];
+        clock_gettime(CLOCK_MONOTONIC, &local_time_push[0]);
+#if IS_CONCUR_PQ
+		pool.EnqueueJob(LocalPush, tmp_buffer);
+#else
 		pq.push(tmp_buffer);
-
+#endif
+        clock_gettime(CLOCK_MONOTONIC, &local_time_push[1]);
+        calclock(local_time_push, &total_merge_push_time, &total_merge_push_count);
+	/* === PROFILE END === */
 		ptr_blk[i]++;
 	}
 
 	int64_t nbyte_merged = 0;
 	int64_t ptr_mrg = 0;
+	int pop_idx = 0;
+	idx_Data tmp_data;
 	while (nbyte_merged < TOTAL_DATA_SIZE){
+	
+	/* === PROFILE START (pop)=== */
+	        struct timespec local_time_pop[2];
+        	clock_gettime(CLOCK_MONOTONIC, &local_time_pop[0]);
+#if IS_CONCUR_PQ
+		if(pq.try_pop(tmp_data)){
+			pop_idx = tmp_data.idx;		
+			merge_buffer[(NR_ENTRIES_BLK * idx_run[MERGE]) + ptr_mrg] = tmp_data.data;
+		}
+		else continue;
+#else 
 		int pop_idx = pq.top().idx;
 		merge_buffer[(NR_ENTRIES_BLK * idx_run[MERGE]) + ptr_mrg] = pq.top().data;
 		pq.pop();
+#endif
+	        clock_gettime(CLOCK_MONOTONIC, &local_time_pop[1]);
+        	calclock(local_time_pop, &total_merge_pop_time, &total_merge_pop_count);
+	/* === PROFILE END === */
 		if (ptr_mrg == NR_ENTRIES_BLK){
 			DBG_P("merged key: %u\n", merge_buffer[NR_ENTRIES_BLK*idx_run[MERGE]].key);
 #if IS_PRL_MERGE
@@ -348,8 +383,17 @@ void Merge(){
 		tmp_buffer.idx = pop_idx;
 		ptr_blk[pop_idx]++;
 
-	//	pool.EnqueueJob(pq_push, pq, tmp_buffer);
+	/* === PROFILE START (push)=== */
+        struct timespec local_time_push[2];
+        clock_gettime(CLOCK_MONOTONIC, &local_time_push[0]);
+#if IS_CONCUR_PQ
+		pool.EnqueueJob(LocalPush, tmp_buffer);
+#else
 		pq.push(tmp_buffer);
+#endif
+        clock_gettime(CLOCK_MONOTONIC, &local_time_push[1]);
+        calclock(local_time_push, &total_merge_push_time, &total_merge_push_count);
+	/* === PROFILE END === */
 	}
 	for (int i = 0; i < run_count; i++)
 		close(fd_run[i]);
@@ -364,6 +408,10 @@ void PrintStat(){
 					  (double)total_run_formation_load_time/1000000000,
 					  (double)total_run_formation_sort_time/1000000000,
 					  (double)total_run_formation_store_time/1000000000);
+	printf("merge;push;pop;\n");
+	printf("%.2f;%.2f;%.2f\n",(double)total_merge_time/1000000000,
+					  (double)total_merge_push_time/1000000000,
+					  (double)total_merge_pop_time/1000000000);
 }
 
 void PrintConfig(){
@@ -382,9 +430,9 @@ int main(int argc, char* argv[]){
 
 	int res = 0;
 	
-#if IS_TBB
+//#if IS_TBB
 	tbb::task_scheduler_init init(NR_THREAD_TBB);
-#endif
+//#endif
 
 
 	// aligned memory allocation
@@ -420,14 +468,14 @@ int main(int argc, char* argv[]){
 #endif
 
 	/* merge */
-        struct timeval diff, startTV, endTV;
-        gettimeofday(&startTV, NULL);
+	struct timespec local_time2[2];
+	clock_gettime(CLOCK_MONOTONIC, &local_time2[0]);
         Merge();        //      kh
-        gettimeofday(&endTV, NULL);
-        timersub(&endTV, &startTV, &diff);
-        printf("*time taken for merge = %ld %ld \n", diff.tv_sec, diff.tv_usec);
+	clock_gettime(CLOCK_MONOTONIC, &local_time2[1]);
+	calclock(local_time2, &total_merge_time, &total_merge_count);
 	
 	PrintStat();
 	free(tmp);
+	free(tmp2);
 	return 0; 
 }

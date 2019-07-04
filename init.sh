@@ -1,3 +1,3 @@
-rm /mnt/test/output.txt
-rm /mnt/test/runs/*
-#rm /mnt/test/input.txt
+rm /mnt/test2/output.txt
+rm /mnt/test2/runs/*
+##################rm /mnt/test2/input.txt

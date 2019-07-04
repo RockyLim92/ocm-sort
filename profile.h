@@ -27,6 +27,9 @@ unsigned long long total_run_formation_time, total_run_formation_count;
 unsigned long long total_run_formation_load_time, total_run_formation_load_count;
 unsigned long long total_run_formation_sort_time, total_run_formation_sort_count;
 unsigned long long total_run_formation_store_time, total_run_formation_store_count;
+unsigned long long total_merge_time, total_merge_count;
+unsigned long long total_merge_push_time, total_merge_push_count;
+unsigned long long total_merge_pop_time, total_merge_pop_count;
 
 
 #endif
